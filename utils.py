@@ -123,3 +123,34 @@ def format_size(size_bytes):
         size_bytes /= 1024
         i += 1
     return f"{size_bytes:.2f} {size_name[i]}"
+    
+def convert_video_to_audio(video_path, output_extension='.mp3'):
+    """تبدیل ویدیو به فایل صوتی"""
+    import subprocess
+    
+    # تولید نام فایل صوتی خروجی
+    audio_path = generate_temp_filename(output_extension)
+    
+    try:
+        # استفاده از ffmpeg برای استخراج صدا با کیفیت بالا
+        cmd = [
+            'ffmpeg', '-i', video_path, 
+            '-q:a', '0', '-map', 'a',
+            audio_path, '-y'
+        ]
+        
+        # اجرای دستور ffmpeg
+        subprocess.run(cmd, check=True, capture_output=True)
+        
+        # بررسی وجود فایل خروجی
+        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+            logger.info(f"فایل صوتی با موفقیت ایجاد شد: {audio_path}")
+            return audio_path
+        else:
+            logger.error("خطا در تبدیل ویدیو به صدا: فایل خروجی ایجاد نشد یا خالی است")
+            return None
+            
+    except Exception as e:
+        logger.error(f"خطا در تبدیل ویدیو به صدا: {e}")
+        logger.exception("جزئیات خطا:")
+        return None
