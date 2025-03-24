@@ -1,6 +1,9 @@
 import os
+import re
+import json
 import logging
 import tempfile
+import requests
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
@@ -115,116 +118,331 @@ class YouTubeDownloader:
         try:
             logger.info(f"شروع دانلود ویدیوی یوتیوب با URL: {url} و itag: {itag}")
             
+            # استخراج شناسه ویدیو برای استفاده احتمالی در روش جایگزین
+            video_id = self._get_video_id(url)
+            if not video_id:
+                logger.error(f"شناسه ویدیو از URL استخراج نشد: {url}")
+                return ""
+                
+            # روش 1: استفاده از pytube
+            output_file = ""
             try:
                 yt = YouTube(url)
                 logger.info(f"اطلاعات ویدیو دریافت شد: {yt.title}")
-            except Exception as yt_error:
-                logger.error(f"خطا در دریافت اطلاعات ویدیو: {yt_error}")
-                return ""
-            
-            try:
+                
                 stream = yt.streams.get_by_itag(itag)
                 if not stream:
                     logger.error(f"استریم با شناسه {itag} یافت نشد برای {url}")
                     return ""
+                    
                 logger.info(f"استریم با کیفیت {stream.resolution} و فرمت {stream.mime_type} یافت شد")
-            except Exception as stream_error:
-                logger.error(f"خطا در دریافت استریم: {stream_error}")
-                return ""
-            
-            # بررسی سایز فایل
-            try:
-                filesize = stream.filesize
-                logger.info(f"سایز فایل: {filesize} بایت ({format_size(filesize)})")
-                if filesize > MAX_TELEGRAM_FILE_SIZE:
-                    logger.warning(f"سایز فایل ({format_size(filesize)}) بیشتر از حد مجاز تلگرام است")
-                    return ""
-            except Exception as size_error:
-                logger.error(f"خطا در دریافت سایز فایل: {size_error}")
-                # ادامه می‌دهیم حتی اگر سایز را نتوانستیم بررسی کنیم
-            
-            # تعیین نام فایل خروجی
-            output_file = generate_temp_filename('.mp4')
-            logger.info(f"نام فایل خروجی: {output_file}")
-            
-            # دانلود و ذخیره ویدیو
-            try:
-                logger.info("در حال دانلود ویدیو...")
+                
+                # بررسی سایز فایل
+                try:
+                    filesize = stream.filesize
+                    logger.info(f"سایز فایل: {filesize} بایت ({format_size(filesize)})")
+                    if filesize > MAX_TELEGRAM_FILE_SIZE:
+                        logger.warning(f"سایز فایل ({format_size(filesize)}) بیشتر از حد مجاز تلگرام است")
+                        return ""
+                except Exception as size_error:
+                    logger.warning(f"خطا در دریافت سایز فایل: {size_error}")
+                    # ادامه می‌دهیم حتی اگر سایز را نتوانستیم بررسی کنیم
+                
+                # تعیین نام فایل خروجی
+                output_file = generate_temp_filename('.mp4')
+                logger.info(f"نام فایل خروجی: {output_file}")
+                
+                # دانلود و ذخیره ویدیو
+                logger.info("در حال دانلود ویدیو با pytube...")
                 stream.download(filename=output_file)
                 
                 # بررسی وجود فایل
-                if not os.path.exists(output_file):
-                    logger.error(f"فایل خروجی ایجاد نشد: {output_file}")
+                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                    file_size = os.path.getsize(output_file)
+                    logger.info(f"ویدیو با موفقیت دانلود شد با pytube. سایز فایل: {format_size(file_size)}")
+                    return output_file
+                else:
+                    logger.warning("فایل دانلود شده با pytube خالی است یا ایجاد نشده است")
+            except Exception as pytube_error:
+                logger.warning(f"خطا در دانلود با pytube: {pytube_error}")
+                logger.warning("در حال تلاش با روش جایگزین...")
+            
+            # روش 2: استفاده از دانلود مستقیم
+            if not output_file or not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
+                logger.info("تلاش برای دانلود با روش مستقیم...")
+                direct_output = self._download_via_direct_link(video_id)
+                if direct_output:
+                    logger.info("دانلود با روش مستقیم موفقیت‌آمیز بود")
+                    return direct_output
+                else:
+                    logger.error("تمام روش‌های دانلود شکست خورد")
                     return ""
-                
-                file_size = os.path.getsize(output_file)
-                logger.info(f"ویدیو با موفقیت دانلود شد. سایز فایل: {format_size(file_size)}")
-                
-                return output_file
-            except Exception as download_error:
-                logger.error(f"خطا در دانلود و ذخیره ویدیو: {download_error}")
-                return ""
+            
+            return output_file
         
         except Exception as outer_error:
             logger.error(f"خطای کلی در دانلود ویدیو: {outer_error}")
             logger.exception("جزئیات خطا:")
             return ""
     
+    def _download_via_direct_link(self, video_id: str) -> str:
+        """تلاش برای دانلود مستقیم شورتز با استفاده از API های عمومی"""
+        try:
+            logger.info(f"تلاش برای دانلود مستقیم ویدیو با شناسه: {video_id}")
+            
+            # استفاده از سرویس‌های مختلف برای یافتن لینک دانلود
+            # روش 1: تلاش با استفاده از yt-dlp API
+            try:
+                output_file = generate_temp_filename('.mp4')
+                logger.info(f"تلاش برای دانلود با استفاده از متد جایگزین... خروجی: {output_file}")
+                
+                # تلاش با استفاده از اجرای command-line
+                import subprocess
+                try:
+                    url = f"https://www.youtube.com/watch?v={video_id}"
+                    logger.info(f"تلاش برای دانلود با استفاده از متد فرعی: {url}")
+                    
+                    # بررسی آیا pytube نصب شده است و آن را مستقیماً در پایتون استفاده می‌کنیم
+                    from pytube import YouTube
+                    try:
+                        # تلاش مجدد با تنظیمات متفاوت
+                        yt = YouTube(url)
+                        
+                        # دریافت جزئیات ویدیو برای لاگ
+                        title = yt.title
+                        author = yt.author
+                        length = yt.length
+                        logger.info(f"اطلاعات ویدیو: عنوان={title}, سازنده={author}, طول={length} ثانیه")
+                        
+                        # استفاده از تکنیک متفاوت برای دانلود: تلاش با استفاده از adaptive streams
+                        video_stream = yt.streams.filter(adaptive=True, file_extension='mp4', only_video=True).order_by('resolution').desc().first()
+                        audio_stream = yt.streams.filter(adaptive=True, file_extension='mp4', only_audio=True).order_by('abr').desc().first()
+                        
+                        if video_stream:
+                            logger.info(f"استریم ویدیویی یافت شد: {video_stream.resolution}")
+                            video_file = generate_temp_filename('.mp4.video')
+                            video_stream.download(filename=video_file)
+                            
+                            if audio_stream:
+                                logger.info(f"استریم صوتی یافت شد: {audio_stream.abr}")
+                                audio_file = generate_temp_filename('.mp4.audio')
+                                audio_stream.download(filename=audio_file)
+                                
+                                # ترکیب فایل‌های ویدیو و صدا با FFmpeg
+                                if os.path.exists(video_file) and os.path.exists(audio_file):
+                                    cmd = [
+                                        'ffmpeg', '-i', video_file, '-i', audio_file, 
+                                        '-c:v', 'copy', '-c:a', 'aac', '-strict', 'experimental',
+                                        output_file, '-y'
+                                    ]
+                                    try:
+                                        subprocess.run(cmd, check=True, capture_output=True)
+                                        logger.info("فایل‌های ویدیو و صوتی با موفقیت ترکیب شدند")
+                                        os.remove(video_file)
+                                        os.remove(audio_file)
+                                    except subprocess.CalledProcessError as ffmpeg_error:
+                                        logger.error(f"خطا در ترکیب فایل‌های ویدیو و صدا: {ffmpeg_error}")
+                                        # استفاده از فایل ویدیو بدون صدا
+                                        os.rename(video_file, output_file)
+                                        os.remove(audio_file)
+                            else:
+                                # اگر استریم صوتی پیدا نشد، فقط از ویدیو استفاده می‌کنیم
+                                os.rename(video_file, output_file)
+                                
+                            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                                file_size = os.path.getsize(output_file)
+                                logger.info(f"ویدیو با موفقیت دانلود شد. سایز: {format_size(file_size)}")
+                                return output_file
+                        else:
+                            # تلاش با استفاده از progressive streams
+                            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+                            if stream:
+                                logger.info(f"استریم progressive یافت شد: {stream.resolution}")
+                                stream.download(filename=output_file)
+                                
+                                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                                    file_size = os.path.getsize(output_file)
+                                    logger.info(f"ویدیو با موفقیت دانلود شد. سایز: {format_size(file_size)}")
+                                    return output_file
+                    
+                    except Exception as pytube_alternative_error:
+                        logger.warning(f"خطا در تلاش جایگزین pytube: {pytube_alternative_error}")
+                    
+                    # اگر به اینجا رسیدیم، روش اول موفق نبوده است
+                    # تلاش با استفاده از youtube-dl
+                    try:
+                        command = ['yt-dlp', '-f', 'best[filesize<50M]', '--merge-output-format', 'mp4', '-o', output_file, url]
+                        process = subprocess.run(command, capture_output=True, text=True, check=True)
+                        logger.info(f"خروجی yt-dlp: {process.stdout[:200]}")
+                        
+                        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                            file_size = os.path.getsize(output_file)
+                            logger.info(f"ویدیو با موفقیت دانلود شد با yt-dlp. سایز: {format_size(file_size)}")
+                            return output_file
+                    except subprocess.CalledProcessError as ytdl_error:
+                        logger.error(f"خطا در اجرای yt-dlp: {ytdl_error}")
+                        
+                    # روش جایگزین دیگر: استفاده از youtube-dl
+                    try:
+                        command = ['youtube-dl', '-f', 'best[filesize<50M]', '--merge-output-format', 'mp4', '-o', output_file, url]
+                        process = subprocess.run(command, capture_output=True, text=True, check=True)
+                        logger.info(f"خروجی youtube-dl: {process.stdout[:200]}")
+                        
+                        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                            file_size = os.path.getsize(output_file)
+                            logger.info(f"ویدیو با موفقیت دانلود شد با youtube-dl. سایز: {format_size(file_size)}")
+                            return output_file
+                    except subprocess.CalledProcessError as ytdl_error:
+                        logger.error(f"خطا در اجرای youtube-dl: {ytdl_error}")
+                
+                except ImportError:
+                    logger.warning("کتابخانه pytube در دسترس نیست")
+                
+                except Exception as cmd_error:
+                    logger.error(f"خطا در اجرای دستور دانلود: {cmd_error}")
+                    logger.exception("جزئیات خطا:")
+                    
+            except Exception as method_error:
+                logger.error(f"خطا در روش اول دانلود: {method_error}")
+                logger.exception("جزئیات خطا:")
+            
+            # روش 2: تلاش برای دانلود مستقیم از API یوتیوب
+            try:
+                logger.info("تلاش با روش دانلود مستقیم از API یوتیوب...")
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Referer': 'https://www.youtube.com/'
+                }
+                
+                # استفاده از یک روش متفاوت برای دانلود شورتز
+                # این روش از API اصلی یوتیوب استفاده نمی‌کند، اما ممکن است در برخی موارد کار کند
+                url = f"https://vid.puffyan.us/api/v1/videos/{video_id}"
+                logger.info(f"تلاش با استفاده از API جایگزین: {url}")
+                try:
+                    response = requests.get(url, headers=headers)
+                    if response.status_code == 200:
+                        video_data = response.json()
+                        if 'formatStreams' in video_data:
+                            best_stream = None
+                            for stream in video_data['formatStreams']:
+                                if 'url' in stream:
+                                    if best_stream is None or ('quality' in stream and '720p' in stream['quality']):
+                                        best_stream = stream
+                                    if '1080p' in stream.get('quality', ''):
+                                        best_stream = stream
+                                        break
+                            
+                            if best_stream and 'url' in best_stream:
+                                video_url = best_stream['url']
+                                logger.info(f"لینک دانلود مستقیم از API جایگزین یافت شد: {video_url[:50]}...")
+                                
+                                output_file = generate_temp_filename('.mp4')
+                                try:
+                                    with requests.get(video_url, stream=True, headers=headers) as r:
+                                        r.raise_for_status()
+                                        with open(output_file, 'wb') as f:
+                                            for chunk in r.iter_content(chunk_size=8192):
+                                                f.write(chunk)
+                                    
+                                    if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                                        file_size = os.path.getsize(output_file)
+                                        logger.info(f"ویدیو با موفقیت از API جایگزین دانلود شد. سایز: {format_size(file_size)}")
+                                        return output_file
+                                except Exception as dl_error:
+                                    logger.error(f"خطا در دانلود از API جایگزین: {dl_error}")
+                except Exception as api_error:
+                    logger.error(f"خطا در دریافت داده از API جایگزین: {api_error}")
+            
+            except Exception as api_method_error:
+                logger.error(f"خطا در روش دوم دانلود: {api_method_error}")
+                logger.exception("جزئیات خطا:")
+            
+            # اگر به اینجا رسیدیم، هیچ یک از روش‌ها موفق نبوده است
+            logger.error("تمام روش‌های دانلود شکست خورد")
+            return ""
+                
+        except Exception as e:
+            logger.error(f"خطای کلی در دانلود مستقیم: {e}")
+            logger.exception("جزئیات خطا:")
+            return ""
+            
+        return ""  # اگر همه روش‌ها شکست خورد
+
     def download_shorts(self, url: str) -> str:
         """دانلود شورتز یوتیوب"""
         try:
             logger.info(f"شروع دانلود شورتز یوتیوب با URL: {url}")
             
+            # استخراج شناسه ویدیو
+            video_id = self._get_video_id(url)
+            if not video_id:
+                logger.error(f"شناسه ویدیوی شورتز استخراج نشد: {url}")
+                return ""
+                
+            logger.info(f"شناسه ویدیوی شورتز استخراج شد: {video_id}")
+            
+            # تبدیل لینک شورتز به لینک عادی ویدیو یوتیوب
+            # بعضی وقت‌ها دانلود از لینک شورتز با خطا مواجه می‌شود
+            # با این روش، ما از لینک استاندارد استفاده می‌کنیم
+            watch_url = f"https://www.youtube.com/watch?v={video_id}"
+            logger.info(f"لینک شورتز به لینک استاندارد تبدیل شد: {watch_url}")
+            
+            # روش 1: استفاده از pytube
+            output_file = ""
             try:
+                # سعی اول: استفاده از لینک اصلی
                 yt = YouTube(url)
-                logger.info(f"اطلاعات شورتز دریافت شد: {yt.title}")
-            except Exception as yt_error:
-                logger.error(f"خطا در دریافت اطلاعات شورتز: {yt_error}")
-                return ""
-            
-            # انتخاب بهترین کیفیت موجود برای دانلود
-            try:
-                stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').first()
-                if not stream:
-                    logger.error(f"استریمی برای دانلود شورتز یافت نشد: {url}")
-                    return ""
-                logger.info(f"استریم با کیفیت {stream.resolution} و فرمت {stream.mime_type} یافت شد")
-            except Exception as stream_error:
-                logger.error(f"خطا در دریافت استریم شورتز: {stream_error}")
-                return ""
-            
-            # بررسی سایز فایل
-            try:
-                filesize = stream.filesize
-                logger.info(f"سایز فایل شورتز: {filesize} بایت ({format_size(filesize)})")
-                if filesize > MAX_TELEGRAM_FILE_SIZE:
-                    logger.warning(f"سایز فایل شورتز ({format_size(filesize)}) بیشتر از حد مجاز تلگرام است")
-                    return ""
-            except Exception as size_error:
-                logger.error(f"خطا در دریافت سایز فایل شورتز: {size_error}")
-                # ادامه می‌دهیم حتی اگر سایز را نتوانستیم بررسی کنیم
-            
-            # تعیین نام فایل خروجی
-            output_file = generate_temp_filename('.mp4')
-            logger.info(f"نام فایل خروجی شورتز: {output_file}")
-            
-            # دانلود و ذخیره ویدیو
-            try:
-                logger.info("در حال دانلود شورتز...")
-                stream.download(filename=output_file)
+                logger.info(f"اطلاعات شورتز دریافت شد با لینک اصلی: {yt.title}")
                 
-                # بررسی وجود فایل
-                if not os.path.exists(output_file):
-                    logger.error(f"فایل خروجی شورتز ایجاد نشد: {output_file}")
+                # انتخاب بهترین کیفیت موجود برای دانلود
+                streams = yt.streams.filter(progressive=True, file_extension='mp4')
+                if not streams or len(streams) == 0:
+                    # تلاش برای دریافت همه استریم‌ها اگر فیلتر کار نکرد
+                    streams = yt.streams.all()
+                    logger.info(f"استریم‌های یافت شده (بدون فیلتر): {len(streams)}")
+                else:
+                    logger.info(f"استریم‌های یافت شده (با فیلتر): {len(streams)}")
+                
+                stream = None
+                try:
+                    stream = streams.order_by('resolution').desc().first()
+                except:
+                    if streams and len(streams) > 0:
+                        stream = streams[0]
+                
+                if stream:
+                    # دانلود و ذخیره ویدیو
+                    output_file = generate_temp_filename('.mp4')
+                    logger.info(f"نام فایل خروجی شورتز: {output_file}")
+                    logger.info("در حال دانلود شورتز با pytube...")
+                    stream.download(filename=output_file)
+                    
+                    if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                        file_size = os.path.getsize(output_file)
+                        logger.info(f"شورتز با موفقیت دانلود شد با pytube. سایز فایل: {format_size(file_size)}")
+                        return output_file
+                    else:
+                        logger.warning("فایل دانلود شده با pytube خالی است یا ایجاد نشده است")
+                else:
+                    logger.warning("هیچ استریمی برای دانلود با pytube یافت نشد")
+            except Exception as pytube_error:
+                logger.warning(f"خطا در دانلود با pytube: {pytube_error}")
+                logger.warning("در حال تلاش با روش جایگزین...")
+            
+            # روش 2: استفاده از دانلود مستقیم
+            if not output_file or not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
+                logger.info("تلاش برای دانلود با روش مستقیم...")
+                direct_output = self._download_via_direct_link(video_id)
+                if direct_output:
+                    logger.info("دانلود با روش مستقیم موفقیت‌آمیز بود")
+                    return direct_output
+                else:
+                    logger.error("تمام روش‌های دانلود شکست خورد")
                     return ""
-                
-                file_size = os.path.getsize(output_file)
-                logger.info(f"شورتز با موفقیت دانلود شد. سایز فایل: {format_size(file_size)}")
-                
-                return output_file
-            except Exception as download_error:
-                logger.error(f"خطا در دانلود و ذخیره شورتز: {download_error}")
-                return ""
+            
+            return output_file
         
         except Exception as e:
             logger.error(f"خطای کلی در دانلود شورتز: {e}")
