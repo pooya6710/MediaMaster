@@ -52,13 +52,13 @@ def process_message(update: Update, context: CallbackContext) -> None:
     """پردازش پیام‌های ورودی و استخراج لینک"""
     if not update.message or not update.message.text:
         return
-    
+
     logger.info(f"پردازش پیام: {update.message.text[:50]}...")
-    
+
     # بهبود شناسایی لینک‌های یوتیوب شورتز
     original_text = update.message.text
     user_id = update.effective_user.id
-    
+
     # برای لینک‌های خاص YouTube Shorts
     if "youtube.com/shorts/" in original_text:
         shorts_pattern = r'(https?://(?:www\.)?youtube\.com/shorts/[\w-]+)'
@@ -68,7 +68,7 @@ def process_message(update: Update, context: CallbackContext) -> None:
             logger.info(f"لینک شورتز یوتیوب به طور مستقیم شناسایی شد: {shorts_url}")
             process_youtube_shorts(update, context, shorts_url, user_id)
             return
-    
+
     # برای لینک‌های عادی یوتیوب
     if "youtube.com/watch?v=" in original_text:
         video_pattern = r'(https?://(?:www\.)?youtube\.com/watch\?v=[\w-]+(?:&\S*)?)'
@@ -78,7 +78,7 @@ def process_message(update: Update, context: CallbackContext) -> None:
             logger.info(f"لینک ویدیوی یوتیوب به طور مستقیم شناسایی شد: {video_url}")
             process_youtube_video(update, context, video_url, user_id)
             return
-            
+
     # برای لینک‌های کوتاه یوتیوب
     if "youtu.be/" in original_text:
         short_url_pattern = r'(https?://(?:www\.)?youtu\.be/[\w-]+)'
@@ -88,7 +88,7 @@ def process_message(update: Update, context: CallbackContext) -> None:
             logger.info(f"لینک کوتاه یوتیوب به طور مستقیم شناسایی شد: {short_url}")
             process_youtube_video(update, context, short_url, user_id)
             return
-    
+
     # برای لینک‌های اینستاگرام
     if "instagram.com/" in original_text:
         instagram_pattern = r'(https?://(?:www\.)?instagram\.com/\S+)'
@@ -98,16 +98,16 @@ def process_message(update: Update, context: CallbackContext) -> None:
             logger.info(f"لینک اینستاگرام به طور مستقیم شناسایی شد: {instagram_url}")
             process_instagram_url(update, context, instagram_url, user_id)
             return
-    
+
     # اگر شناسایی مستقیم موفق نبود، از روش عمومی استفاده می‌کنیم
     url = extract_url(original_text)
     if not url:
         logger.warning(f"لینک معتبری یافت نشد در پیام: {original_text[:50]}...")
         update.message.reply_text(NO_LINK_FOUND)
         return
-    
+
     logger.info(f"URL استخراج شده با روش عمومی: {url} - کاربر: {user_id}")
-    
+
     if is_instagram_url(url):
         logger.info(f"پردازش لینک اینستاگرام: {url}")
         process_instagram_url(update, context, url, user_id)
@@ -122,26 +122,26 @@ def process_instagram_url(update: Update, context: CallbackContext, url: str, us
     """پردازش لینک اینستاگرام"""
     status_message = update.message.reply_text(INSTAGRAM_DOWNLOAD_STARTED)
     downloaded_files = []  # تعریف لیست خالی برای فایل‌های دانلود شده
-    
+
     try:
         logger.info(f"شروع دانلود محتوا از اینستاگرام با URL: {url}")
         downloaded_files = instagram_downloader.download_post(url)
-        
+
         if not downloaded_files:
             logger.warning(f"هیچ فایلی از {url} دانلود نشد.")
             status_message.edit_text(INSTAGRAM_DOWNLOAD_ERROR)
             return
-        
+
         logger.info(f"تعداد {len(downloaded_files)} فایل از اینستاگرام دانلود شد")
         status_message.edit_text(UPLOAD_TO_TELEGRAM)
-        
+
         # ارسال فایل‌ها به کاربر
         if len(downloaded_files) == 1:
             # اگر فقط یک فایل باشد
             file_path = downloaded_files[0]
             file_size = get_file_size(file_path)
             logger.info(f"ارسال فایل با سایز {format_size(file_size)}")
-            
+
             try:
                 if file_path.endswith('.jpg'):
                     with open(file_path, 'rb') as photo_file:
@@ -153,7 +153,7 @@ def process_instagram_url(update: Update, context: CallbackContext, url: str, us
                 logger.error(f"خطا در ارسال فایل به کاربر: {send_error}")
                 status_message.edit_text(GENERAL_ERROR)
                 return
-                
+
         else:
             # اگر چندین فایل باشد (آلبوم)
             media_group = []
@@ -161,25 +161,25 @@ def process_instagram_url(update: Update, context: CallbackContext, url: str, us
                 for file_path in downloaded_files[:10]:  # حداکثر 10 فایل در یک آلبوم
                     file_size = get_file_size(file_path)
                     logger.info(f"اضافه کردن فایل با سایز {format_size(file_size)} به آلبوم")
-                    
+
                     with open(file_path, 'rb') as media_file:
                         if file_path.endswith('.jpg'):
                             media_group.append(InputMediaPhoto(media=media_file))
                         else:
                             media_group.append(InputMediaVideo(media=media_file))
-                
+
                 if media_group:
                     logger.info(f"ارسال آلبوم با {len(media_group)} فایل")
                     update.message.reply_media_group(media=media_group)
-                    
+
             except Exception as album_error:
                 logger.error(f"خطا در ارسال آلبوم به کاربر: {album_error}")
                 status_message.edit_text(GENERAL_ERROR)
                 return
-        
+
         status_message.edit_text(INSTAGRAM_DOWNLOAD_SUCCESS)
         logger.info("محتوا با موفقیت به کاربر ارسال شد")
-    
+
     except PrivateProfileNotFollowedException:
         logger.warning(f"پروفایل خصوصی: {url}")
         status_message.edit_text(INSTAGRAM_PRIVATE_ACCOUNT)
@@ -217,13 +217,13 @@ def process_youtube_shorts(update: Update, context: CallbackContext, url: str, u
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     # ذخیره اطلاعات برای استفاده در کالبک
     user_data[user_id] = {
         'youtube_shorts_url': url,
         'chat_id': update.effective_chat.id
     }
-    
+
     # ارسال پیام با دکمه‌های انتخابی
     update.message.reply_text(
         "لطفاً نوع دانلود را انتخاب کنید:",
@@ -234,25 +234,25 @@ def download_youtube_shorts_video(update: Update, context: CallbackContext, url:
     """دانلود ویدیوی شورتز یوتیوب"""
     query = update.callback_query
     query.answer()
-    
+
     status_message = query.edit_message_text(YOUTUBE_SHORTS_DOWNLOAD_STARTED)
     output_file = ""  # تعریف متغیر خروجی
-    
+
     try:
         logger.info(f"شروع دانلود شورتز یوتیوب با URL: {url}")
         output_file = youtube_downloader.download_shorts(url)
-        
+
         if not output_file:
             logger.warning(f"هیچ فایلی از شورتز {url} دانلود نشد.")
             status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
             return
-        
+
         logger.info(f"شورتز یوتیوب با موفقیت دانلود شد: {output_file}")
         file_size = get_file_size(output_file)
         logger.info(f"سایز فایل شورتز: {format_size(file_size)}")
-        
+
         status_message.edit_text(UPLOAD_TO_TELEGRAM)
-        
+
         # ارسال ویدیو به کاربر
         try:
             with open(output_file, 'rb') as video_file:
@@ -260,14 +260,14 @@ def download_youtube_shorts_video(update: Update, context: CallbackContext, url:
                     chat_id=user_data[user_id]['chat_id'],
                     video=video_file
                 )
-            
+
             status_message.edit_text(YOUTUBE_SHORTS_DOWNLOAD_SUCCESS)
             logger.info("شورتز یوتیوب با موفقیت به کاربر ارسال شد")
-            
+
         except Exception as send_error:
             logger.error(f"خطا در ارسال شورتز به کاربر: {send_error}")
             status_message.edit_text(GENERAL_ERROR)
-    
+
     except Exception as e:
         if "No connection" in str(e) or "timeout" in str(e).lower() or "connection" in str(e).lower():
             logger.error(f"خطای شبکه در دانلود شورتز یوتیوب: {e}")
@@ -292,37 +292,37 @@ def download_youtube_shorts_audio(update: Update, context: CallbackContext, url:
     """دانلود و استخراج صدای شورتز یوتیوب"""
     query = update.callback_query
     query.answer()
-    
+
     status_message = query.edit_message_text(AUDIO_EXTRACTION_STARTED)
     video_file = ""
     audio_file = ""
-    
+
     try:
         logger.info(f"شروع دانلود شورتز یوتیوب برای استخراج صدا با URL: {url}")
         # ابتدا ویدیو را دانلود می‌کنیم
         video_file = youtube_downloader.download_shorts(url)
-        
+
         if not video_file:
             logger.warning(f"هیچ فایلی از شورتز {url} دانلود نشد.")
             status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
             return
-        
+
         logger.info(f"شورتز یوتیوب با موفقیت دانلود شد: {video_file}")
-        
+
         # استخراج صدا از ویدیو
         logger.info("در حال استخراج صدا از ویدیو...")
         audio_file = convert_video_to_audio(video_file)
-        
+
         if not audio_file:
             logger.error("خطا در استخراج صدا از ویدیو")
             status_message.edit_text(AUDIO_EXTRACTION_ERROR)
             return
-        
+
         file_size = get_file_size(audio_file)
         logger.info(f"صدا با موفقیت استخراج شد. سایز: {format_size(file_size)}")
-        
+
         status_message.edit_text(UPLOAD_TO_TELEGRAM)
-        
+
         # ارسال فایل صوتی به کاربر
         try:
             with open(audio_file, 'rb') as audio:
@@ -331,14 +331,14 @@ def download_youtube_shorts_audio(update: Update, context: CallbackContext, url:
                     audio=audio,
                     title=f"Audio from YouTube Shorts"
                 )
-            
+
             status_message.edit_text(AUDIO_EXTRACTION_SUCCESS)
             logger.info("فایل صوتی با موفقیت به کاربر ارسال شد")
-            
+
         except Exception as send_error:
             logger.error(f"خطا در ارسال فایل صوتی به کاربر: {send_error}")
             status_message.edit_text(GENERAL_ERROR)
-    
+
     except Exception as e:
         logger.error(f"خطا در استخراج صدا از شورتز یوتیوب {url}: {e}")
         logger.exception("جزئیات خطا:")
@@ -357,42 +357,53 @@ def download_youtube_shorts_audio(update: Update, context: CallbackContext, url:
 
 def process_youtube_video(update: Update, context: CallbackContext, url: str, user_id: int) -> None:
     """پردازش لینک ویدیوی یوتیوب"""
-    # ایجاد دکمه‌های انتخاب حالت دانلود (ویدیو یا صدا)
-    keyboard = [
-        [
-            InlineKeyboardButton(BUTTON_DOWNLOAD_VIDEO, callback_data=f"video_{url}"),
-            InlineKeyboardButton(BUTTON_EXTRACT_AUDIO, callback_data=f"audio_{url}")
-        ]
-    ]
+    # دریافت لیست کیفیت‌های موجود
+    youtube_downloader = YouTubeDownloader()
+    available_streams = youtube_downloader.get_available_streams(url)
+
+    if not available_streams:
+        update.message.reply_text(YOUTUBE_DOWNLOAD_ERROR)
+        return
+
+    # ایجاد دکمه‌های انتخاب کیفیت
+    keyboard = []
+    for quality, (itag, size) in available_streams.items():
+        keyboard.append([InlineKeyboardButton(quality, callback_data=f"youtube_quality_{itag}")])
+
+    keyboard.append([
+        InlineKeyboardButton(BUTTON_DOWNLOAD_VIDEO, callback_data=f"video_{url}"),
+        InlineKeyboardButton(BUTTON_EXTRACT_AUDIO, callback_data=f"audio_{url}")
+    ])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
     # ذخیره اطلاعات برای استفاده در کالبک
     user_data[user_id] = {
         'youtube_url': url,
         'chat_id': update.effective_chat.id
     }
-    
+
     # ارسال پیام با دکمه‌های انتخابی
     update.message.reply_text(
         "لطفاً نوع دانلود را انتخاب کنید:",
         reply_markup=reply_markup
     )
 
+
 def download_youtube_video(update: Update, context: CallbackContext, url: str, user_id: int) -> None:
     """دانلود ویدیوی یوتیوب"""
     query = update.callback_query
     query.answer()
-    
+
     status_message = query.edit_message_text(YOUTUBE_DOWNLOAD_STARTED)
-    
+
     try:
         # دریافت استریم‌های موجود
         streams = youtube_downloader.get_available_streams(url)
-        
+
         if not streams:
             status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
             return
-        
+
         # ذخیره اطلاعات برای استفاده در کالبک
         user_data[user_id] = {
             'youtube_url': url,
@@ -400,45 +411,45 @@ def download_youtube_video(update: Update, context: CallbackContext, url: str, u
             'status_message_id': status_message.message_id,
             'chat_id': update.effective_chat.id
         }
-        
+
         # ایجاد دکمه‌های انتخاب کیفیت
         keyboard = []
         for resolution, (itag, _) in streams.items():
             keyboard.append([InlineKeyboardButton(resolution, callback_data=f"yt_{itag}")])
-        
+
         # اضافه کردن دکمه بازگشت
         keyboard.append([InlineKeyboardButton(BUTTON_BACK, callback_data=f"back_{url}")])
-        
+
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         status_message.edit_text(
             YOUTUBE_QUALITY_SELECTION,
             reply_markup=reply_markup
         )
-    
+
     except Exception as e:
         logger.error(f"خطا در پردازش ویدیوی یوتیوب {url}: {e}")
         status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
-        
+
 def download_youtube_audio(update: Update, context: CallbackContext, url: str, user_id: int) -> None:
     """دانلود و استخراج صدای ویدیوی یوتیوب"""
     query = update.callback_query
     query.answer()
-    
+
     status_message = query.edit_message_text(AUDIO_EXTRACTION_STARTED)
     video_file = ""
     audio_file = ""
-    
+
     try:
         logger.info(f"شروع دانلود ویدیوی یوتیوب برای استخراج صدا با URL: {url}")
-        
+
         # دریافت استریم‌های موجود
         streams = youtube_downloader.get_available_streams(url)
-        
+
         if not streams:
             status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
             return
-        
+
         # انتخاب بهترین کیفیت با کمترین حجم
         itag = None
         min_size = float('inf')
@@ -446,35 +457,35 @@ def download_youtube_audio(update: Update, context: CallbackContext, url: str, u
             if size < min_size:
                 min_size = size
                 itag = tag
-        
+
         if not itag:
             status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
             return
-            
+
         # دانلود ویدیو
         video_file = youtube_downloader.download_video(url, int(itag))
-        
+
         if not video_file:
             logger.warning(f"هیچ فایلی از URL {url} دانلود نشد.")
             status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
             return
-        
+
         logger.info(f"ویدیوی یوتیوب با موفقیت دانلود شد: {video_file}")
-        
+
         # استخراج صدا از ویدیو
         logger.info("در حال استخراج صدا از ویدیو...")
         audio_file = convert_video_to_audio(video_file)
-        
+
         if not audio_file:
             logger.error("خطا در استخراج صدا از ویدیو")
             status_message.edit_text(AUDIO_EXTRACTION_ERROR)
             return
-        
+
         file_size = get_file_size(audio_file)
         logger.info(f"صدا با موفقیت استخراج شد. سایز: {format_size(file_size)}")
-        
+
         status_message.edit_text(UPLOAD_TO_TELEGRAM)
-        
+
         # ارسال فایل صوتی به کاربر
         try:
             with open(audio_file, 'rb') as audio:
@@ -483,14 +494,14 @@ def download_youtube_audio(update: Update, context: CallbackContext, url: str, u
                     audio=audio,
                     title=f"Audio from YouTube"
                 )
-            
+
             status_message.edit_text(AUDIO_EXTRACTION_SUCCESS)
             logger.info("فایل صوتی با موفقیت به کاربر ارسال شد")
-            
+
         except Exception as send_error:
             logger.error(f"خطا در ارسال فایل صوتی به کاربر: {send_error}")
             status_message.edit_text(GENERAL_ERROR)
-    
+
     except Exception as e:
         logger.error(f"خطا در استخراج صدا از ویدیوی یوتیوب {url}: {e}")
         logger.exception("جزئیات خطا:")
@@ -511,10 +522,10 @@ def callback_handler(update: Update, context: CallbackContext) -> None:
     """هندلر اصلی برای همه دکمه‌های اینلاین"""
     query = update.callback_query
     query.answer()
-    
+
     user_id = update.effective_user.id
     callback_data = query.data
-    
+
     # پردازش دکمه‌های برای ویدیوی یوتیوب
     if callback_data.startswith("yt_"):
         youtube_button_callback(update, context)
@@ -547,41 +558,45 @@ def callback_handler(update: Update, context: CallbackContext) -> None:
             "لطفاً نوع دانلود را انتخاب کنید:",
             reply_markup=reply_markup
         )
+    elif callback_data.startswith("youtube_quality_"):
+        itag = int(callback_data[len("youtube_quality_"):])
+        youtube_quality_callback(update, context, itag)
+
 
 def youtube_button_callback(update: Update, context: CallbackContext) -> None:
     """پردازش انتخاب کیفیت ویدیوی یوتیوب"""
     query = update.callback_query
-    
+
     user_id = update.effective_user.id
     if user_id not in user_data:
         logger.warning(f"کاربر {user_id} در دیکشنری داده‌ها یافت نشد")
         query.edit_message_text(GENERAL_ERROR)
         return
-    
+
     # استخراج شناسه استریم از کالبک
     itag = int(query.data.split('_')[1])
     url = user_data[user_id]['youtube_url']
     logger.info(f"دانلود ویدیوی یوتیوب با itag: {itag} - URL: {url}")
-    
+
     query.edit_message_text(DOWNLOADING_MESSAGE)
     output_file = ""  # تعریف متغیر خروجی
-    
+
     try:
         # دانلود ویدیو با کیفیت انتخاب شده
         output_file = youtube_downloader.download_video(url, itag)
-        
+
         if not output_file:
             logger.warning(f"هیچ فایلی با itag {itag} از URL {url} دانلود نشد")
             query.edit_message_text(YOUTUBE_DOWNLOAD_ERROR)
             return
-        
+
         logger.info(f"ویدیوی یوتیوب با موفقیت دانلود شد: {output_file}")
         file_size = get_file_size(output_file)
         logger.info(f"سایز فایل ویدیو: {format_size(file_size)}")
-        
+
         # ارسال ویدیو به کاربر
         query.edit_message_text(UPLOAD_TO_TELEGRAM)
-        
+
         try:
             with open(output_file, 'rb') as video_file:
                 context.bot.send_video(
@@ -589,14 +604,14 @@ def youtube_button_callback(update: Update, context: CallbackContext) -> None:
                     video=video_file,
                     supports_streaming=True
                 )
-            
+
             logger.info("ویدیوی یوتیوب با موفقیت به کاربر ارسال شد")
             query.edit_message_text(YOUTUBE_DOWNLOAD_SUCCESS)
-        
+
         except Exception as send_error:
             logger.error(f"خطا در ارسال ویدیوی یوتیوب به کاربر: {send_error}")
             query.edit_message_text(GENERAL_ERROR)
-    
+
     except Exception as e:
         if "No connection" in str(e) or "timeout" in str(e).lower() or "connection" in str(e).lower():
             logger.error(f"خطای شبکه در دانلود ویدیوی یوتیوب: {e}")
@@ -617,21 +632,70 @@ def youtube_button_callback(update: Update, context: CallbackContext) -> None:
             logger.info(f"پاک کردن فایل موقت ویدیو: {output_file}")
             youtube_downloader.clean_up(output_file)
 
+def youtube_quality_callback(update: Update, context: CallbackContext, itag: int) -> None:
+    """Handles YouTube quality selection callback."""
+    query = update.callback_query
+    query.answer()
+
+    user_id = update.effective_user.id
+    if user_id not in user_data:
+        logger.warning(f"User {user_id} not found in user data")
+        query.edit_message_text(GENERAL_ERROR)
+        return
+
+    url = user_data[user_id]['youtube_url']
+    logger.info(f"Downloading YouTube video with itag: {itag} - URL: {url}")
+
+    query.edit_message_text(DOWNLOADING_MESSAGE)
+    output_file = ""
+
+    try:
+        output_file = youtube_downloader.download_video(url, itag)
+        if not output_file:
+            logger.warning(f"No file downloaded with itag {itag} from URL {url}")
+            query.edit_message_text(YOUTUBE_DOWNLOAD_ERROR)
+            return
+
+        logger.info(f"YouTube video downloaded successfully: {output_file}")
+        file_size = get_file_size(output_file)
+        logger.info(f"Video file size: {format_size(file_size)}")
+
+        query.edit_message_text(UPLOAD_TO_TELEGRAM)
+        with open(output_file, 'rb') as video_file:
+            context.bot.send_video(
+                chat_id=user_data[user_id]['chat_id'],
+                video=video_file,
+                supports_streaming=True
+            )
+        logger.info("YouTube video sent to user successfully")
+        query.edit_message_text(YOUTUBE_DOWNLOAD_SUCCESS)
+
+    except Exception as e:
+        logger.error(f"Error downloading YouTube video: {e}")
+        logger.exception("Error details:")
+        query.edit_message_text(YOUTUBE_DOWNLOAD_ERROR)
+    finally:
+        if user_id in user_data:
+            del user_data[user_id]
+        if output_file:
+            youtube_downloader.clean_up(output_file)
+
+
 def main() -> None:
     """راه‌اندازی بات"""
     # ایجاد آپدیتر
     updater = Updater(TOKEN)
     dispatcher = updater.dispatcher
-    
+
     # اضافه کردن هندلرها
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("about", about_command))
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, process_message))
-    
+
     # هندلر جدید برای تمام دکمه‌های اینلاین
     dispatcher.add_handler(CallbackQueryHandler(callback_handler))
-    
+
     # شروع بات
     logger.info("بات در حال اجرا است...")
     updater.start_polling()
