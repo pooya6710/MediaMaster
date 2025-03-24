@@ -420,7 +420,6 @@ def download_youtube_shorts_audio(update: Update, context: CallbackContext, url:
 def process_youtube_video(update: Update, context: CallbackContext, url: str, user_id: int) -> None:
     """پردازش لینک ویدیوی یوتیوب"""
     # دریافت لیست کیفیت‌های موجود
-    youtube_downloader = YouTubeDownloader()
     available_streams = youtube_downloader.get_available_streams(url)
 
     if not available_streams:
@@ -477,7 +476,7 @@ def download_youtube_video(update: Update, context: CallbackContext, url: str, u
         # ایجاد دکمه‌های انتخاب کیفیت
         keyboard = []
         for resolution, (itag, _) in streams.items():
-            keyboard.append([InlineKeyboardButton(resolution, callback_data=f"yt_{itag}")])
+            keyboard.append([InlineKeyboardButton(resolution, callback_data=f"youtube_quality_{itag}")])
 
         # اضافه کردن دکمه بازگشت
         keyboard.append([InlineKeyboardButton(BUTTON_BACK, callback_data=f"back_{url}")])
@@ -588,9 +587,15 @@ def callback_handler(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     callback_data = query.data
 
-    # پردازش دکمه‌های برای ویدیوی یوتیوب
+    # پردازش دکمه‌های برای ویدیوی یوتیوب (فرمت قدیمی)
     if callback_data.startswith("yt_"):
-        youtube_button_callback(update, context)
+        # برای سازگاری با دکمه‌های قدیمی
+        try:
+            itag = int(callback_data[len("yt_"):])
+            youtube_quality_callback(update, context, itag)
+        except:
+            logger.error(f"خطا در پردازش دکمه yt_ با داده {callback_data}")
+            query.answer("خطا در پردازش دکمه. لطفا مجددا تلاش کنید")
     elif callback_data.startswith("youtube_quality_"):
         itag = int(callback_data[len("youtube_quality_"):])
         youtube_quality_callback(update, context, itag)
@@ -644,74 +649,7 @@ def callback_handler(update: Update, context: CallbackContext) -> None:
         )
 
 
-def youtube_button_callback(update: Update, context: CallbackContext) -> None:
-    """پردازش انتخاب کیفیت ویدیوی یوتیوب"""
-    query = update.callback_query
-
-    user_id = update.effective_user.id
-    if user_id not in user_data:
-        logger.warning(f"کاربر {user_id} در دیکشنری داده‌ها یافت نشد")
-        query.edit_message_text(GENERAL_ERROR)
-        return
-
-    # استخراج شناسه استریم از کالبک
-    itag = int(query.data.split('_')[1])
-    url = user_data[user_id]['youtube_url']
-    logger.info(f"دانلود ویدیوی یوتیوب با itag: {itag} - URL: {url}")
-
-    query.edit_message_text(DOWNLOADING_MESSAGE)
-    output_file = ""  # تعریف متغیر خروجی
-
-    try:
-        # دانلود ویدیو با کیفیت انتخاب شده
-        output_file = youtube_downloader.download_video(url, itag)
-
-        if not output_file:
-            logger.warning(f"هیچ فایلی با itag {itag} از URL {url} دانلود نشد")
-            query.edit_message_text(YOUTUBE_DOWNLOAD_ERROR)
-            return
-
-        logger.info(f"ویدیوی یوتیوب با موفقیت دانلود شد: {output_file}")
-        file_size = get_file_size(output_file)
-        logger.info(f"سایز فایل ویدیو: {format_size(file_size)}")
-
-        # ارسال ویدیو به کاربر
-        query.edit_message_text(UPLOAD_TO_TELEGRAM)
-
-        try:
-            with open(output_file, 'rb') as video_file:
-                context.bot.send_video(
-                    chat_id=user_data[user_id]['chat_id'],
-                    video=video_file,
-                    supports_streaming=True
-                )
-
-            logger.info("ویدیوی یوتیوب با موفقیت به کاربر ارسال شد")
-            query.edit_message_text(YOUTUBE_DOWNLOAD_SUCCESS)
-
-        except Exception as send_error:
-            logger.error(f"خطا در ارسال ویدیوی یوتیوب به کاربر: {send_error}")
-            query.edit_message_text(GENERAL_ERROR)
-
-    except Exception as e:
-        if "No connection" in str(e) or "timeout" in str(e).lower() or "connection" in str(e).lower():
-            logger.error(f"خطای شبکه در دانلود ویدیوی یوتیوب: {e}")
-            query.edit_message_text(NETWORK_ERROR)
-        elif "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
-            logger.error(f"خطای محدودیت در دانلود ویدیوی یوتیوب: {e}")
-            query.edit_message_text(RATE_LIMIT_ERROR)
-        else:
-            logger.error(f"خطا در دانلود ویدیوی یوتیوب: {e}")
-            logger.exception("جزئیات خطا:")
-            query.edit_message_text(YOUTUBE_DOWNLOAD_ERROR)
-    finally:
-        # پاک کردن اطلاعات کاربر و فایل موقت
-        if user_id in user_data:
-            logger.info(f"پاک کردن اطلاعات کاربر {user_id} از دیکشنری")
-            del user_data[user_id]
-        if output_file:
-            logger.info(f"پاک کردن فایل موقت ویدیو: {output_file}")
-            youtube_downloader.clean_up(output_file)
+# این تابع دیگر استفاده نمی‌شود و با youtube_quality_callback جایگزین شده است
 
 def shorts_quality_callback(update: Update, context: CallbackContext, itag: int) -> None:
     """پردازش انتخاب کیفیت شورتز یوتیوب"""
