@@ -19,6 +19,43 @@ class YouTubeDownloader:
     def __init__(self):
         """راه‌اندازی کلاس دانلودر یوتیوب"""
         pass
+        
+    def _get_streams_with_ytdlp(self, url: str) -> Dict[str, Tuple[str, int]]:
+        """دریافت استریم‌ها با استفاده از yt-dlp به عنوان پلن B"""
+        streams = {}
+        try:
+            import yt_dlp
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]',
+                'listformats': True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                formats = []
+                
+                # ابتدا فرمت‌ها را فیلتر و مرتب می‌کنیم
+                for format in info.get('formats', []):
+                    if format.get('ext') == 'mp4' and format.get('filesize') and format.get('height'):
+                        formats.append(format)
+                        
+                # مرتب‌سازی بر اساس کیفیت (از بیشترین به کمترین)
+                formats = sorted(formats, key=lambda x: x.get('height', 0), reverse=True)
+                
+                # اضافه کردن بهترین چند فرمت
+                for format in formats[:5]:  # محدود به 5 فرمت با بهترین کیفیت
+                    resolution = f"{format.get('width', 0)}x{format.get('height', 0)}"
+                    filesize = format.get('filesize', 0)
+                    
+                    if filesize < MAX_TELEGRAM_FILE_SIZE:
+                        key = f"{resolution} ({format_size(filesize)})"
+                        streams[key] = (format.get('format_id'), filesize)
+                        
+            logger.info(f"{len(streams)} استریم با استفاده از yt-dlp برای URL {url} یافت شد")
+            
+        except Exception as yt_dlp_error:
+            logger.error(f"خطا در استفاده از yt-dlp: {yt_dlp_error}")
+            
+        return streams
     
     def _get_video_id(self, url: str) -> Optional[str]:
         """استخراج شناسه ویدیو از URL یوتیوب"""
@@ -81,12 +118,26 @@ class YouTubeDownloader:
     
     def get_available_streams(self, url: str) -> Dict[str, Tuple[str, int]]:
         """دریافت لیست استریم‌های موجود برای دانلود به همراه سایز آنها"""
+        video_id = self._get_video_id(url)
+        if not video_id:
+            logger.error(f"شناسه ویدیو از URL استخراج نشد: {url}")
+            return {}
+        
+        # اول با yt-dlp تلاش می‌کنیم چون پایدارتر است و محدودیت کمتری دارد
         try:
-            video_id = self._get_video_id(url)
-            if not video_id:
-                logger.error(f"شناسه ویدیو از URL استخراج نشد: {url}")
-                return {}
-            
+            logger.info(f"تلاش برای دریافت استریم‌ها با yt-dlp برای ویدیو {video_id}")
+            ytdlp_streams = self._get_streams_with_ytdlp(url)
+            if ytdlp_streams:
+                logger.info(f"{len(ytdlp_streams)} استریم با yt-dlp یافت شد")
+                return ytdlp_streams
+            else:
+                logger.warning("هیچ استریمی با yt-dlp یافت نشد. تلاش با pytube...")
+        except Exception as e:
+            logger.error(f"خطا در استفاده از yt-dlp: {e}")
+            logger.info("تلاش با pytube...")
+        
+        # اگر yt-dlp موفق نبود، از pytube استفاده می‌کنیم
+        try:
             yt = YouTube(url)
             yt.bypass_age_gate()  # تلاش برای بایپس محدودیت سنی
             streams = {}
@@ -116,7 +167,7 @@ class YouTubeDownloader:
                 if resolution not in [s.split(" ")[0] for s in streams.keys()] and count < 3:
                     try:
                         filesize = stream.filesize
-                        # برای کیفیت‌های بالا، تنها در صورتی که حجم آن کمتر از 50MB باشد اضافه می‌کنیم
+                        # برای کیفیت‌های بالا، تنها در صورتی که حجم آن کمتر از حد مجاز تلگرام باشد اضافه می‌کنیم
                         if filesize < MAX_TELEGRAM_FILE_SIZE:
                             key = f"{resolution} ({format_size(filesize)}) - فقط تصویر"
                             streams[key] = (stream.itag, filesize)
@@ -125,27 +176,12 @@ class YouTubeDownloader:
                         logger.warning(f"خطا در دریافت اطلاعات استریم {stream.itag}: {e}")
                         continue
             
-            # اگر هیچ استریمی پیدا نشد، از yt-dlp استفاده می‌کنیم (پلن B)
-            if not streams:
-                try:
-                    import yt_dlp
-                    ydl_opts = {
-                        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]',
-                        'listformats': True,
-                    }
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(url, download=False)
-                        for format in info.get('formats', [])[:5]:  # محدود به 5 فرمت اول
-                            if format.get('ext') == 'mp4' and format.get('filesize'):
-                                resolution = f"{format.get('width', 0)}x{format.get('height', 0)}"
-                                filesize = format.get('filesize', 0)
-                                if filesize < MAX_TELEGRAM_FILE_SIZE:
-                                    key = f"{resolution} ({format_size(filesize)}) - yt-dlp"
-                                    streams[key] = (format.get('format_id'), filesize)
-                except Exception as e:
-                    logger.error(f"خطا در استفاده از yt-dlp: {e}")
-            
-            return streams
+            if streams:
+                logger.info(f"{len(streams)} استریم با pytube یافت شد")
+                return streams
+            else:
+                logger.warning("هیچ استریمی با pytube یافت نشد")
+                return {}
         
         except VideoUnavailable:
             logger.error(f"ویدیو موجود نیست: {url}")
@@ -154,7 +190,7 @@ class YouTubeDownloader:
             logger.error(f"لینک یوتیوب نامعتبر است: {url}")
             return {}
         except Exception as e:
-            logger.error(f"خطا در دریافت استریم‌های ویدیو: {e}")
+            logger.error(f"خطا در دریافت استریم‌های ویدیو با pytube: {e}")
             return {}
     
     def download_video(self, url: str, itag: int) -> str:
@@ -167,9 +203,43 @@ class YouTubeDownloader:
             if not video_id:
                 logger.error(f"شناسه ویدیو از URL استخراج نشد: {url}")
                 return ""
+            
+            output_file = generate_temp_filename('.mp4')
+            logger.info(f"نام فایل خروجی: {output_file}")
+            
+            # روش 1: استفاده از yt-dlp (پایدارتر و قدرتمندتر)
+            try:
+                logger.info("در حال تلاش برای دانلود با yt-dlp...")
+                import yt_dlp
                 
-            # روش 1: استفاده از pytube
-            output_file = ""
+                ydl_opts = {
+                    'format': f'{itag}/best',
+                    'outtmpl': output_file,
+                    'quiet': True
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                
+                # بررسی وجود فایل
+                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                    file_size = os.path.getsize(output_file)
+                    if file_size > MAX_TELEGRAM_FILE_SIZE:
+                        logger.warning(f"سایز فایل ({format_size(file_size)}) بیشتر از حد مجاز تلگرام است")
+                        os.remove(output_file)
+                        return ""
+                    
+                    logger.info(f"ویدیو با موفقیت با yt-dlp دانلود شد. سایز فایل: {format_size(file_size)}")
+                    return output_file
+                else:
+                    logger.warning("فایل دانلود شده با yt-dlp خالی است یا ایجاد نشده است")
+            except Exception as ytdlp_error:
+                logger.warning(f"خطا در دانلود با yt-dlp: {ytdlp_error}")
+                logger.warning("در حال تلاش با روش جایگزین (pytube)...")
+                if os.path.exists(output_file):
+                    os.remove(output_file)
+            
+            # روش 2: استفاده از pytube
             try:
                 yt = YouTube(url)
                 logger.info(f"اطلاعات ویدیو دریافت شد: {yt.title}")
@@ -190,11 +260,6 @@ class YouTubeDownloader:
                         return ""
                 except Exception as size_error:
                     logger.warning(f"خطا در دریافت سایز فایل: {size_error}")
-                    # ادامه می‌دهیم حتی اگر سایز را نتوانستیم بررسی کنیم
-                
-                # تعیین نام فایل خروجی
-                output_file = generate_temp_filename('.mp4')
-                logger.info(f"نام فایل خروجی: {output_file}")
                 
                 # دانلود و ذخیره ویدیو
                 logger.info("در حال دانلود ویدیو با pytube...")
@@ -209,20 +274,19 @@ class YouTubeDownloader:
                     logger.warning("فایل دانلود شده با pytube خالی است یا ایجاد نشده است")
             except Exception as pytube_error:
                 logger.warning(f"خطا در دانلود با pytube: {pytube_error}")
-                logger.warning("در حال تلاش با روش جایگزین...")
+                logger.warning("در حال تلاش با روش مستقیم...")
+                if os.path.exists(output_file):
+                    os.remove(output_file)
             
-            # روش 2: استفاده از دانلود مستقیم
-            if not output_file or not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
-                logger.info("تلاش برای دانلود با روش مستقیم...")
-                direct_output = self._download_via_direct_link(video_id)
-                if direct_output:
-                    logger.info("دانلود با روش مستقیم موفقیت‌آمیز بود")
-                    return direct_output
-                else:
-                    logger.error("تمام روش‌های دانلود شکست خورد")
-                    return ""
-            
-            return output_file
+            # روش 3: استفاده از دانلود مستقیم
+            logger.info("تلاش برای دانلود با روش مستقیم...")
+            direct_output = self._download_via_direct_link(video_id)
+            if direct_output:
+                logger.info("دانلود با روش مستقیم موفقیت‌آمیز بود")
+                return direct_output
+            else:
+                logger.error("تمام روش‌های دانلود شکست خورد")
+                return ""
         
         except Exception as outer_error:
             logger.error(f"خطای کلی در دانلود ویدیو: {outer_error}")
@@ -433,8 +497,42 @@ class YouTubeDownloader:
             watch_url = f"https://www.youtube.com/watch?v={video_id}"
             logger.info(f"لینک شورتز به لینک استاندارد تبدیل شد: {watch_url}")
             
-            # روش 1: استفاده از pytube
-            output_file = ""
+            output_file = generate_temp_filename('.mp4')
+            logger.info(f"نام فایل خروجی شورتز: {output_file}")
+            
+            # روش 1: استفاده از yt-dlp (پایدارتر و قدرتمندتر)
+            try:
+                logger.info("در حال تلاش برای دانلود شورتز با yt-dlp...")
+                import yt_dlp
+                
+                ydl_opts = {
+                    'format': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+                    'outtmpl': output_file,
+                    'quiet': True
+                }
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                
+                # بررسی وجود فایل
+                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                    file_size = os.path.getsize(output_file)
+                    if file_size > MAX_TELEGRAM_FILE_SIZE:
+                        logger.warning(f"سایز فایل ({format_size(file_size)}) بیشتر از حد مجاز تلگرام است")
+                        os.remove(output_file)
+                        return ""
+                    
+                    logger.info(f"شورتز با موفقیت با yt-dlp دانلود شد. سایز فایل: {format_size(file_size)}")
+                    return output_file
+                else:
+                    logger.warning("فایل دانلود شده با yt-dlp خالی است یا ایجاد نشده است")
+            except Exception as ytdlp_error:
+                logger.warning(f"خطا در دانلود شورتز با yt-dlp: {ytdlp_error}")
+                logger.warning("در حال تلاش با روش جایگزین (pytube)...")
+                if os.path.exists(output_file):
+                    os.remove(output_file)
+            
+            # روش 2: استفاده از pytube
             try:
                 # سعی اول: استفاده از لینک اصلی
                 yt = YouTube(url)
@@ -458,8 +556,6 @@ class YouTubeDownloader:
                 
                 if stream:
                     # دانلود و ذخیره ویدیو
-                    output_file = generate_temp_filename('.mp4')
-                    logger.info(f"نام فایل خروجی شورتز: {output_file}")
                     logger.info("در حال دانلود شورتز با pytube...")
                     stream.download(filename=output_file)
                     
@@ -473,20 +569,19 @@ class YouTubeDownloader:
                     logger.warning("هیچ استریمی برای دانلود با pytube یافت نشد")
             except Exception as pytube_error:
                 logger.warning(f"خطا در دانلود با pytube: {pytube_error}")
-                logger.warning("در حال تلاش با روش جایگزین...")
+                logger.warning("در حال تلاش با روش مستقیم...")
+                if os.path.exists(output_file):
+                    os.remove(output_file)
             
-            # روش 2: استفاده از دانلود مستقیم
-            if not output_file or not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
-                logger.info("تلاش برای دانلود با روش مستقیم...")
-                direct_output = self._download_via_direct_link(video_id)
-                if direct_output:
-                    logger.info("دانلود با روش مستقیم موفقیت‌آمیز بود")
-                    return direct_output
-                else:
-                    logger.error("تمام روش‌های دانلود شکست خورد")
-                    return ""
-            
-            return output_file
+            # روش 3: استفاده از دانلود مستقیم
+            logger.info("تلاش برای دانلود با روش مستقیم...")
+            direct_output = self._download_via_direct_link(video_id)
+            if direct_output:
+                logger.info("دانلود با روش مستقیم موفقیت‌آمیز بود")
+                return direct_output
+            else:
+                logger.error("تمام روش‌های دانلود شکست خورد")
+                return ""
         
         except Exception as e:
             logger.error(f"خطای کلی در دانلود شورتز: {e}")

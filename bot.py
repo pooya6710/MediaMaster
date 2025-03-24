@@ -28,6 +28,7 @@ from utils import (
 )
 from downloader.instagram import InstagramDownloader
 from downloader.youtube import YouTubeDownloader
+from download_instagram_handlers import download_instagram_video, download_instagram_audio
 
 # راه‌اندازی دانلودرها
 instagram_downloader = InstagramDownloader()
@@ -133,10 +134,12 @@ def process_instagram_url(update: Update, context: CallbackContext, url: str, us
         
         # بررسی اگر ریلز یا ویدیو است، امکان انتخاب کیفیت و استخراج صدا را ارائه می‌دهیم
         if '/reel/' in url or '/p/' in url:
+            # برای امنیت بیشتر و جلوگیری از خطای Button_data_invalid،
+            # از شناسه کاربر برای ایجاد کلید منحصر به فرد استفاده می‌کنیم
             keyboard = [
                 [
-                    InlineKeyboardButton(BUTTON_DOWNLOAD_VIDEO, callback_data=f"insta_video_{url}"),
-                    InlineKeyboardButton(BUTTON_EXTRACT_AUDIO, callback_data=f"insta_audio_{url}")
+                    InlineKeyboardButton(BUTTON_DOWNLOAD_VIDEO, callback_data=f"insta_video_{user_id}"),
+                    InlineKeyboardButton(BUTTON_EXTRACT_AUDIO, callback_data=f"insta_audio_{user_id}")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -594,11 +597,19 @@ def callback_handler(update: Update, context: CallbackContext) -> None:
         download_youtube_audio(update, context, url, user_id)
     # پردازش دکمه‌های اینستاگرام
     elif callback_data.startswith("insta_video_"):
-        url = callback_data[len("insta_video_"):]
-        download_instagram_video(update, context, url, user_id)
+        callback_user_id = int(callback_data[len("insta_video_"):])
+        if callback_user_id == user_id and user_id in user_data and 'instagram_url' in user_data[user_id]:
+            url = user_data[user_id]['instagram_url']
+            download_instagram_video(update, context, url, user_id)
+        else:
+            query.answer("این دکمه برای شما نیست یا منقضی شده است.")
     elif callback_data.startswith("insta_audio_"):
-        url = callback_data[len("insta_audio_"):]
-        download_instagram_audio(update, context, url, user_id)
+        callback_user_id = int(callback_data[len("insta_audio_"):])
+        if callback_user_id == user_id and user_id in user_data and 'instagram_url' in user_data[user_id]:
+            url = user_data[user_id]['instagram_url']
+            download_instagram_audio(update, context, url, user_id)
+        else:
+            query.answer("این دکمه برای شما نیست یا منقضی شده است.")
     # پردازش دکمه بازگشت
     elif callback_data.startswith("back_"):
         url = callback_data[len("back_"):]
