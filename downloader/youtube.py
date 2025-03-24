@@ -88,18 +88,62 @@ class YouTubeDownloader:
                 return {}
             
             yt = YouTube(url)
+            yt.bypass_age_gate()  # تلاش برای بایپس محدودیت سنی
             streams = {}
             
-            # استخراج استریم‌های ویدیویی (با صدا و بدون صدا)
+            # استخراج استریم‌های ویدیویی (با صدا)
             video_streams = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc()
             
+            # استخراج استریم‌های ویدیویی با کیفیت بالا (بدون صدا)
+            high_res_streams = yt.streams.filter(adaptive=True, file_extension='mp4', only_video=True).order_by('resolution').desc()
+            
+            # ابتدا استریم‌های با کیفیت معمولی (همراه با صدا) را اضافه می‌کنیم
             for stream in video_streams:
-                # استخراج اطلاعات هر استریم
                 resolution = stream.resolution
                 if resolution not in streams:
-                    filesize = stream.filesize
-                    key = f"{resolution} ({format_size(filesize)})"
-                    streams[key] = (stream.itag, filesize)
+                    try:
+                        filesize = stream.filesize
+                        key = f"{resolution} ({format_size(filesize)}) - با صدا"
+                        streams[key] = (stream.itag, filesize)
+                    except Exception as e:
+                        logger.warning(f"خطا در دریافت اطلاعات استریم {stream.itag}: {e}")
+                        continue
+            
+            # سپس استریم‌های با کیفیت بالا را اضافه می‌کنیم (حداکثر 3 مورد)
+            count = 0
+            for stream in high_res_streams:
+                resolution = stream.resolution
+                if resolution not in [s.split(" ")[0] for s in streams.keys()] and count < 3:
+                    try:
+                        filesize = stream.filesize
+                        # برای کیفیت‌های بالا، تنها در صورتی که حجم آن کمتر از 50MB باشد اضافه می‌کنیم
+                        if filesize < MAX_TELEGRAM_FILE_SIZE:
+                            key = f"{resolution} ({format_size(filesize)}) - فقط تصویر"
+                            streams[key] = (stream.itag, filesize)
+                            count += 1
+                    except Exception as e:
+                        logger.warning(f"خطا در دریافت اطلاعات استریم {stream.itag}: {e}")
+                        continue
+            
+            # اگر هیچ استریمی پیدا نشد، از yt-dlp استفاده می‌کنیم (پلن B)
+            if not streams:
+                try:
+                    import yt_dlp
+                    ydl_opts = {
+                        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]',
+                        'listformats': True,
+                    }
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                        for format in info.get('formats', [])[:5]:  # محدود به 5 فرمت اول
+                            if format.get('ext') == 'mp4' and format.get('filesize'):
+                                resolution = f"{format.get('width', 0)}x{format.get('height', 0)}"
+                                filesize = format.get('filesize', 0)
+                                if filesize < MAX_TELEGRAM_FILE_SIZE:
+                                    key = f"{resolution} ({format_size(filesize)}) - yt-dlp"
+                                    streams[key] = (format.get('format_id'), filesize)
+                except Exception as e:
+                    logger.error(f"خطا در استفاده از yt-dlp: {e}")
             
             return streams
         
