@@ -428,20 +428,21 @@ def process_youtube_video(update: Update, context: CallbackContext, url: str, us
 
     # ایجاد دکمه‌های انتخاب کیفیت
     keyboard = []
-    for quality, (itag, size) in available_streams.items():
-        keyboard.append([InlineKeyboardButton(quality, callback_data=f"youtube_quality_{itag}")])
-
+    
+    # دکمه‌های اصلی
     keyboard.append([
         InlineKeyboardButton(BUTTON_DOWNLOAD_VIDEO, callback_data=f"video_{url}"),
         InlineKeyboardButton(BUTTON_EXTRACT_AUDIO, callback_data=f"audio_{url}")
     ])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
+    
     # ذخیره اطلاعات برای استفاده در کالبک
     user_data[user_id] = {
         'youtube_url': url,
-        'chat_id': update.effective_chat.id
+        'chat_id': update.effective_chat.id,
+        'streams': available_streams
     }
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     # ارسال پیام با دکمه‌های انتخابی
     update.message.reply_text(
@@ -462,6 +463,7 @@ def download_youtube_video(update: Update, context: CallbackContext, url: str, u
         streams = youtube_downloader.get_available_streams(url)
 
         if not streams:
+            logger.warning(f"هیچ استریمی برای URL {url} یافت نشد")
             status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
             return
 
@@ -472,11 +474,15 @@ def download_youtube_video(update: Update, context: CallbackContext, url: str, u
             'status_message_id': status_message.message_id,
             'chat_id': update.effective_chat.id
         }
+        logger.info(f"اطلاعات کاربر {user_id} با کلید youtube_url={url} ذخیره شد")
 
         # ایجاد دکمه‌های انتخاب کیفیت
         keyboard = []
-        for resolution, (itag, _) in streams.items():
-            keyboard.append([InlineKeyboardButton(resolution, callback_data=f"youtube_quality_{itag}")])
+        for resolution, (itag, size) in streams.items():
+            size_str = format_size(size)
+            keyboard.append([InlineKeyboardButton(f"{resolution} ({size_str})", callback_data=f"youtube_quality_{itag}")])
+        
+        logger.info(f"تعداد {len(keyboard)} دکمه برای انتخاب کیفیت ساخته شد")
 
         # اضافه کردن دکمه بازگشت
         keyboard.append([InlineKeyboardButton(BUTTON_BACK, callback_data=f"back_{url}")])
@@ -487,9 +493,11 @@ def download_youtube_video(update: Update, context: CallbackContext, url: str, u
             YOUTUBE_QUALITY_SELECTION,
             reply_markup=reply_markup
         )
+        logger.info("دکمه‌های انتخاب کیفیت با موفقیت نمایش داده شد")
 
     except Exception as e:
         logger.error(f"خطا در پردازش ویدیوی یوتیوب {url}: {e}")
+        logger.exception("جزئیات خطا:")
         status_message.edit_text(YOUTUBE_DOWNLOAD_ERROR)
 
 def download_youtube_audio(update: Update, context: CallbackContext, url: str, user_id: int) -> None:
@@ -887,6 +895,13 @@ def youtube_quality_callback(update: Update, context: CallbackContext, itag: int
         query.edit_message_text(GENERAL_ERROR)
         return
 
+    # چک کردن کلید youtube_url در دیکشنری کاربر
+    if 'youtube_url' not in user_data[user_id]:
+        logger.warning(f"کلید youtube_url برای کاربر {user_id} یافت نشد")
+        logger.warning(f"کلیدهای موجود: {list(user_data[user_id].keys())}")
+        query.edit_message_text(GENERAL_ERROR)
+        return
+
     url = user_data[user_id]['youtube_url']
     logger.info(f"دانلود ویدیوی یوتیوب با itag: {itag} - URL: {url}")
 
@@ -915,13 +930,22 @@ def youtube_quality_callback(update: Update, context: CallbackContext, itag: int
         query.edit_message_text(YOUTUBE_DOWNLOAD_SUCCESS)
 
     except Exception as e:
-        logger.error(f"خطا در دانلود ویدیوی یوتیوب: {e}")
-        logger.exception("جزئیات خطا:")
-        query.edit_message_text(YOUTUBE_DOWNLOAD_ERROR)
+        if "No connection" in str(e) or "timeout" in str(e).lower() or "connection" in str(e).lower():
+            logger.error(f"خطای شبکه در دانلود ویدیوی یوتیوب: {e}")
+            query.edit_message_text(NETWORK_ERROR)
+        elif "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
+            logger.error(f"خطای محدودیت در دانلود ویدیوی یوتیوب: {e}")
+            query.edit_message_text(RATE_LIMIT_ERROR)
+        else:
+            logger.error(f"خطا در دانلود ویدیوی یوتیوب: {e}")
+            logger.exception("جزئیات خطا:")
+            query.edit_message_text(YOUTUBE_DOWNLOAD_ERROR)
     finally:
         if user_id in user_data:
+            logger.info(f"پاک کردن اطلاعات کاربر {user_id} از دیکشنری")
             del user_data[user_id]
         if output_file:
+            logger.info(f"پاک کردن فایل موقت ویدیو: {output_file}")
             youtube_downloader.clean_up(output_file)
 
 
