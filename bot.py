@@ -123,6 +123,10 @@ def process_instagram_url(update: Update, context: CallbackContext, url: str, us
     """پردازش لینک اینستاگرام"""
     chat_id = update.effective_chat.id
     
+    # تعریف متغیرها خارج از بلوک try برای جلوگیری از خطای دسترسی
+    status_message = None
+    downloaded_files = []
+    
     try:
         logger.info(f"شروع پردازش محتوا از اینستاگرام با URL: {url}")
         
@@ -152,18 +156,19 @@ def process_instagram_url(update: Update, context: CallbackContext, url: str, us
         
         # برای سایر محتواها (مثلاً استوری‌ها یا عکس‌ها)، مستقیماً شروع به دانلود می‌کنیم
         status_message = update.message.reply_text(INSTAGRAM_DOWNLOAD_STARTED)
-        downloaded_files = []  # تعریف لیست خالی برای فایل‌های دانلود شده
 
         logger.info(f"شروع دانلود محتوا از اینستاگرام با URL: {url}")
         downloaded_files = instagram_downloader.download_post(url)
 
         if not downloaded_files:
             logger.warning(f"هیچ فایلی از {url} دانلود نشد.")
-            status_message.edit_text(INSTAGRAM_DOWNLOAD_ERROR)
+            if status_message:
+                status_message.edit_text(INSTAGRAM_DOWNLOAD_ERROR)
             return
 
         logger.info(f"تعداد {len(downloaded_files)} فایل از اینستاگرام دانلود شد")
-        status_message.edit_text(UPLOAD_TO_TELEGRAM)
+        if status_message:
+            status_message.edit_text(UPLOAD_TO_TELEGRAM)
 
         # ارسال فایل‌ها به کاربر
         if len(downloaded_files) == 1:
@@ -181,7 +186,8 @@ def process_instagram_url(update: Update, context: CallbackContext, url: str, us
                         update.message.reply_video(video=video_file)
             except Exception as send_error:
                 logger.error(f"خطا در ارسال فایل به کاربر: {send_error}")
-                status_message.edit_text(GENERAL_ERROR)
+                if status_message:
+                    status_message.edit_text(GENERAL_ERROR)
                 return
 
         else:
@@ -204,26 +210,34 @@ def process_instagram_url(update: Update, context: CallbackContext, url: str, us
 
             except Exception as album_error:
                 logger.error(f"خطا در ارسال آلبوم به کاربر: {album_error}")
-                status_message.edit_text(GENERAL_ERROR)
+                if status_message:
+                    status_message.edit_text(GENERAL_ERROR)
                 return
 
-        status_message.edit_text(INSTAGRAM_DOWNLOAD_SUCCESS)
+        if status_message:
+            status_message.edit_text(INSTAGRAM_DOWNLOAD_SUCCESS)
         logger.info("محتوا با موفقیت به کاربر ارسال شد")
 
     except PrivateProfileNotFollowedException:
         logger.warning(f"پروفایل خصوصی: {url}")
-        status_message.edit_text(INSTAGRAM_PRIVATE_ACCOUNT)
+        if status_message:
+            status_message.edit_text(INSTAGRAM_PRIVATE_ACCOUNT)
     except Exception as e:
         if "No connection" in str(e) or "timeout" in str(e).lower() or "connection" in str(e).lower():
             logger.error(f"خطای شبکه در دانلود از اینستاگرام: {e}")
-            status_message.edit_text(NETWORK_ERROR)
+            if status_message:
+                status_message.edit_text(NETWORK_ERROR)
         elif "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
             logger.error(f"خطای محدودیت در دانلود از اینستاگرام: {e}")
-            status_message.edit_text(RATE_LIMIT_ERROR)
+            if status_message:
+                status_message.edit_text(RATE_LIMIT_ERROR)
         else:
             logger.error(f"خطا در پردازش لینک اینستاگرام {url}: {e}")
             logger.exception("جزئیات خطا:")
-            status_message.edit_text(INSTAGRAM_DOWNLOAD_ERROR)
+            if status_message:
+                status_message.edit_text(INSTAGRAM_DOWNLOAD_ERROR)
+            else:
+                update.message.reply_text(INSTAGRAM_DOWNLOAD_ERROR)
     finally:
         # پاک کردن فایل‌های موقت
         if downloaded_files:
@@ -577,6 +591,9 @@ def callback_handler(update: Update, context: CallbackContext) -> None:
     # پردازش دکمه‌های برای ویدیوی یوتیوب
     if callback_data.startswith("yt_"):
         youtube_button_callback(update, context)
+    elif callback_data.startswith("youtube_quality_"):
+        itag = int(callback_data[len("youtube_quality_"):])
+        youtube_quality_callback(update, context, itag)
     # پردازش دکمه‌های انتخاب کیفیت برای شورتز یوتیوب
     elif callback_data.startswith("shorts_quality_"):
         itag = int(callback_data[len("shorts_quality_"):])
@@ -625,9 +642,6 @@ def callback_handler(update: Update, context: CallbackContext) -> None:
             "لطفاً نوع دانلود را انتخاب کنید:",
             reply_markup=reply_markup
         )
-    elif callback_data.startswith("youtube_quality_"):
-        itag = int(callback_data[len("youtube_quality_"):])
-        youtube_quality_callback(update, context, itag)
 
 
 def youtube_button_callback(update: Update, context: CallbackContext) -> None:
