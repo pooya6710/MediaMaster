@@ -449,6 +449,105 @@ class YouTubeDownloader:
             logger.exception("جزئیات خطا:")
             return ""
     
+    def get_playlist_videos(self, playlist_url: str, limit: int = 5) -> List[Dict[str, str]]:
+        """دریافت لیست ویدیوهای موجود در پلی‌لیست یوتیوب
+        
+        Args:
+            playlist_url: لینک پلی‌لیست یوتیوب
+            limit: حداکثر تعداد ویدیوها (پیش‌فرض: 5)
+            
+        Returns:
+            لیستی از دیکشنری‌ها شامل اطلاعات هر ویدیو (عنوان، URL، و شناسه)
+        """
+        try:
+            logger.info(f"دریافت اطلاعات پلی‌لیست: {playlist_url}")
+            
+            # تنظیم کردن دستور yt-dlp برای دریافت اطلاعات پلی‌لیست
+            from utils import extract_playlist_id
+            playlist_id = extract_playlist_id(playlist_url)
+            
+            if not playlist_id:
+                logger.error(f"شناسه پلی‌لیست استخراج نشد: {playlist_url}")
+                return []
+                
+            videos = []
+            try:
+                # استفاده از yt-dlp برای دریافت اطلاعات پلی‌لیست
+                import subprocess
+                import json
+                
+                # ساخت دستور برای دریافت اطلاعات پلی‌لیست با فرمت JSON
+                cmd = [
+                    'yt-dlp', 
+                    '--flat-playlist',  # فقط اطلاعات پلی‌لیست، بدون دانلود
+                    '--dump-json',      # خروجی با فرمت JSON
+                    f'--playlist-items', f'1-{limit}',  # محدودیت تعداد ویدیوها
+                    f'https://www.youtube.com/playlist?list={playlist_id}'
+                ]
+                
+                # اجرای دستور
+                process = subprocess.run(cmd, capture_output=True, text=True)
+                
+                # پردازش خروجی JSON
+                if process.stdout:
+                    lines = process.stdout.strip().split('\n')
+                    
+                    for line in lines:
+                        if not line.strip():
+                            continue
+                            
+                        try:
+                            video_info = json.loads(line)
+                            video_id = video_info.get('id')
+                            title = video_info.get('title', 'ویدیوی بدون عنوان')
+                            
+                            if video_id:
+                                url = f"https://www.youtube.com/watch?v={video_id}"
+                                videos.append({
+                                    'id': video_id,
+                                    'title': title,
+                                    'url': url
+                                })
+                                logger.info(f"ویدیو پیدا شد: {title}")
+                        except json.JSONDecodeError:
+                            logger.warning(f"خطا در پردازش JSON ویدیو: {line[:100]}")
+            
+            except Exception as e:
+                logger.error(f"خطا در اجرای yt-dlp: {e}")
+                logger.exception("جزئیات خطا:")
+                
+                # تلاش با روش جایگزین: pytube
+                try:
+                    from pytube import Playlist
+                    
+                    playlist = Playlist(playlist_url)
+                    logger.info(f"دریافت اطلاعات پلی‌لیست با pytube: {playlist.title}")
+                    
+                    for i, video_url in enumerate(playlist.video_urls[:limit]):
+                        try:
+                            yt = YouTube(video_url)
+                            video_id = self._get_video_id(video_url)
+                            title = yt.title
+                            
+                            videos.append({
+                                'id': video_id,
+                                'title': title,
+                                'url': video_url
+                            })
+                            logger.info(f"ویدیو پیدا شد: {title}")
+                        except Exception as video_error:
+                            logger.warning(f"خطا در دریافت اطلاعات ویدیو {video_url}: {video_error}")
+                except Exception as pytube_error:
+                    logger.error(f"خطا در دریافت اطلاعات پلی‌لیست با pytube: {pytube_error}")
+            
+            logger.info(f"تعداد {len(videos)} ویدیو از پلی‌لیست دریافت شد")
+            return videos
+            
+        except Exception as e:
+            logger.error(f"خطا در دریافت ویدیوهای پلی‌لیست: {e}")
+            logger.exception("جزئیات خطا:")
+            return []
+    
     def clean_up(self, file_path: str) -> None:
         """پاک کردن فایل موقت"""
         clean_temp_file(file_path)

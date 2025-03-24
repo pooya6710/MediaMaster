@@ -94,6 +94,42 @@ def is_youtube_shorts(url):
         logger.info(f"لینک شورتز یوتیوب شناسایی شد: {url}")
     
     return is_shorts
+    
+def is_youtube_playlist(url):
+    """بررسی می‌کند که آیا URL مربوط به پلی‌لیست یوتیوب است یا خیر"""
+    if not url:
+        return False
+        
+    # الگوهای متداول لینک پلی‌لیست یوتیوب
+    # مانند: https://www.youtube.com/playlist?list=PLAYLIST_ID
+    # یا: https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID
+    patterns = [
+        r'youtube\.com/playlist\?list=[\w-]+',                        # لینک مستقیم پلی‌لیست
+        r'youtube\.com/watch\?(?:.*&)?list=[\w-]+(?:&.*)?'            # ویدیو از یک پلی‌لیست
+    ]
+    
+    for pattern in patterns:
+        if re.search(pattern, url):
+            logger.info(f"لینک پلی‌لیست یوتیوب شناسایی شد: {url}")
+            return True
+    
+    return False
+    
+def extract_playlist_id(url):
+    """استخراج شناسه پلی‌لیست از URL یوتیوب"""
+    if not url:
+        return None
+        
+    # الگوی استخراج شناسه پلی‌لیست
+    playlist_id_pattern = r'list=([\w-]+)'
+    match = re.search(playlist_id_pattern, url)
+    
+    if match:
+        playlist_id = match.group(1)
+        logger.info(f"شناسه پلی‌لیست استخراج شد: {playlist_id}")
+        return playlist_id
+    
+    return None
 
 def generate_temp_filename(extension='.mp4'):
     """ایجاد یک نام فایل موقت با پسوند مشخص"""
