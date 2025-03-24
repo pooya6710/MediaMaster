@@ -20,22 +20,60 @@ class YouTubeDownloader:
     def _get_video_id(self, url: str) -> Optional[str]:
         """استخراج شناسه ویدیو از URL یوتیوب"""
         try:
+            # بررسی اینکه آیا لینک اصلی یوتیوب بدون هیچ ویدیویی خاص است
+            if url.strip('/') in ['https://youtube.com', 'http://youtube.com', 
+                              'https://www.youtube.com', 'http://www.youtube.com']:
+                logger.warning(f"لینک ارسال شده فقط صفحه اصلی یوتیوب است: {url}")
+                return None
+            
             parsed_url = urlparse(url)
+            
+            # بررسی فرمت کوتاه youtu.be
             if parsed_url.netloc == 'youtu.be':
-                return parsed_url.path[1:]
+                video_id = parsed_url.path[1:]
+                logger.info(f"شناسه ویدیو از لینک کوتاه: {video_id}")
+                return video_id
+                
+            # بررسی انواع مختلف لینک‌های یوتیوب 
             elif parsed_url.netloc in ('youtube.com', 'www.youtube.com'):
+                # ویدیوی عادی
                 if '/watch' in parsed_url.path:
-                    return parse_qs(parsed_url.query)['v'][0]
+                    if 'v' in parse_qs(parsed_url.query):
+                        video_id = parse_qs(parsed_url.query)['v'][0]
+                        logger.info(f"شناسه ویدیو از لینک watch: {video_id}")
+                        return video_id
+                    
+                # لینک شورتز
                 elif '/shorts/' in parsed_url.path:
-                    # استخراج شناسه ویدیو از شورتز
-                    return parsed_url.path.split('/shorts/')[1]
+                    parts = parsed_url.path.split('/shorts/')
+                    if len(parts) > 1 and parts[1]:
+                        # حذف هرگونه پارامتر اضافی که ممکن است بعد از شناسه باشد
+                        video_id = parts[1].split('/')[0]
+                        logger.info(f"شناسه ویدیو از لینک شورتز: {video_id}")
+                        return video_id
+                    
+                # لینک embeded
                 elif '/embed/' in parsed_url.path:
-                    return parsed_url.path.split('/embed/')[1]
+                    parts = parsed_url.path.split('/embed/')
+                    if len(parts) > 1 and parts[1]:
+                        video_id = parts[1].split('/')[0]
+                        logger.info(f"شناسه ویدیو از لینک embed: {video_id}")
+                        return video_id
+                        
+                # فرمت v
                 elif '/v/' in parsed_url.path:
-                    return parsed_url.path.split('/v/')[1]
+                    parts = parsed_url.path.split('/v/')
+                    if len(parts) > 1 and parts[1]:
+                        video_id = parts[1].split('/')[0]
+                        logger.info(f"شناسه ویدیو از لینک /v/: {video_id}")
+                        return video_id
+            
+            logger.warning(f"هیچ شناسه ویدیویی در URL پیدا نشد: {url}")
             return None
+            
         except Exception as e:
             logger.error(f"خطا در استخراج شناسه ویدیو: {e}")
+            logger.exception("جزئیات خطا:")
             return None
     
     def get_available_streams(self, url: str) -> Dict[str, Tuple[str, int]]:
@@ -75,57 +113,122 @@ class YouTubeDownloader:
     def download_video(self, url: str, itag: int) -> str:
         """دانلود ویدیو با استفاده از شناسه استریم"""
         try:
-            yt = YouTube(url)
-            stream = yt.streams.get_by_itag(itag)
+            logger.info(f"شروع دانلود ویدیوی یوتیوب با URL: {url} و itag: {itag}")
             
-            if not stream:
-                logger.error(f"استریم با شناسه {itag} یافت نشد برای {url}")
+            try:
+                yt = YouTube(url)
+                logger.info(f"اطلاعات ویدیو دریافت شد: {yt.title}")
+            except Exception as yt_error:
+                logger.error(f"خطا در دریافت اطلاعات ویدیو: {yt_error}")
+                return ""
+            
+            try:
+                stream = yt.streams.get_by_itag(itag)
+                if not stream:
+                    logger.error(f"استریم با شناسه {itag} یافت نشد برای {url}")
+                    return ""
+                logger.info(f"استریم با کیفیت {stream.resolution} و فرمت {stream.mime_type} یافت شد")
+            except Exception as stream_error:
+                logger.error(f"خطا در دریافت استریم: {stream_error}")
                 return ""
             
             # بررسی سایز فایل
-            if stream.filesize > MAX_TELEGRAM_FILE_SIZE:
-                logger.warning(f"سایز فایل ({stream.filesize}) بیشتر از حد مجاز تلگرام است")
-                return ""
+            try:
+                filesize = stream.filesize
+                logger.info(f"سایز فایل: {filesize} بایت ({format_size(filesize)})")
+                if filesize > MAX_TELEGRAM_FILE_SIZE:
+                    logger.warning(f"سایز فایل ({format_size(filesize)}) بیشتر از حد مجاز تلگرام است")
+                    return ""
+            except Exception as size_error:
+                logger.error(f"خطا در دریافت سایز فایل: {size_error}")
+                # ادامه می‌دهیم حتی اگر سایز را نتوانستیم بررسی کنیم
             
             # تعیین نام فایل خروجی
             output_file = generate_temp_filename('.mp4')
+            logger.info(f"نام فایل خروجی: {output_file}")
             
             # دانلود و ذخیره ویدیو
-            stream.download(filename=output_file)
-            
-            return output_file
+            try:
+                logger.info("در حال دانلود ویدیو...")
+                stream.download(filename=output_file)
+                
+                # بررسی وجود فایل
+                if not os.path.exists(output_file):
+                    logger.error(f"فایل خروجی ایجاد نشد: {output_file}")
+                    return ""
+                
+                file_size = os.path.getsize(output_file)
+                logger.info(f"ویدیو با موفقیت دانلود شد. سایز فایل: {format_size(file_size)}")
+                
+                return output_file
+            except Exception as download_error:
+                logger.error(f"خطا در دانلود و ذخیره ویدیو: {download_error}")
+                return ""
         
-        except Exception as e:
-            logger.error(f"خطا در دانلود ویدیو: {e}")
+        except Exception as outer_error:
+            logger.error(f"خطای کلی در دانلود ویدیو: {outer_error}")
+            logger.exception("جزئیات خطا:")
             return ""
     
     def download_shorts(self, url: str) -> str:
         """دانلود شورتز یوتیوب"""
         try:
-            yt = YouTube(url)
+            logger.info(f"شروع دانلود شورتز یوتیوب با URL: {url}")
+            
+            try:
+                yt = YouTube(url)
+                logger.info(f"اطلاعات شورتز دریافت شد: {yt.title}")
+            except Exception as yt_error:
+                logger.error(f"خطا در دریافت اطلاعات شورتز: {yt_error}")
+                return ""
             
             # انتخاب بهترین کیفیت موجود برای دانلود
-            stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').first()
-            
-            if not stream:
-                logger.error(f"استریمی برای دانلود شورتز یافت نشد: {url}")
+            try:
+                stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').first()
+                if not stream:
+                    logger.error(f"استریمی برای دانلود شورتز یافت نشد: {url}")
+                    return ""
+                logger.info(f"استریم با کیفیت {stream.resolution} و فرمت {stream.mime_type} یافت شد")
+            except Exception as stream_error:
+                logger.error(f"خطا در دریافت استریم شورتز: {stream_error}")
                 return ""
             
             # بررسی سایز فایل
-            if stream.filesize > MAX_TELEGRAM_FILE_SIZE:
-                logger.warning(f"سایز فایل شورتز ({stream.filesize}) بیشتر از حد مجاز تلگرام است")
-                return ""
+            try:
+                filesize = stream.filesize
+                logger.info(f"سایز فایل شورتز: {filesize} بایت ({format_size(filesize)})")
+                if filesize > MAX_TELEGRAM_FILE_SIZE:
+                    logger.warning(f"سایز فایل شورتز ({format_size(filesize)}) بیشتر از حد مجاز تلگرام است")
+                    return ""
+            except Exception as size_error:
+                logger.error(f"خطا در دریافت سایز فایل شورتز: {size_error}")
+                # ادامه می‌دهیم حتی اگر سایز را نتوانستیم بررسی کنیم
             
             # تعیین نام فایل خروجی
             output_file = generate_temp_filename('.mp4')
+            logger.info(f"نام فایل خروجی شورتز: {output_file}")
             
             # دانلود و ذخیره ویدیو
-            stream.download(filename=output_file)
-            
-            return output_file
+            try:
+                logger.info("در حال دانلود شورتز...")
+                stream.download(filename=output_file)
+                
+                # بررسی وجود فایل
+                if not os.path.exists(output_file):
+                    logger.error(f"فایل خروجی شورتز ایجاد نشد: {output_file}")
+                    return ""
+                
+                file_size = os.path.getsize(output_file)
+                logger.info(f"شورتز با موفقیت دانلود شد. سایز فایل: {format_size(file_size)}")
+                
+                return output_file
+            except Exception as download_error:
+                logger.error(f"خطا در دانلود و ذخیره شورتز: {download_error}")
+                return ""
         
         except Exception as e:
-            logger.error(f"خطا در دانلود شورتز: {e}")
+            logger.error(f"خطای کلی در دانلود شورتز: {e}")
+            logger.exception("جزئیات خطا:")
             return ""
     
     def clean_up(self, file_path: str) -> None:

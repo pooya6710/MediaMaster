@@ -10,9 +10,65 @@ logger = logging.getLogger(__name__)
 
 def extract_url(text):
     """استخراج URL از متن ارسال شده"""
+    # الگوی URL استاندارد
     url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+    
+    # یافتن URL ها در متن
     urls = re.findall(url_pattern, text)
-    return urls[0] if urls else None
+    
+    if not urls:
+        # اگر URL پیدا نشد، ممکن است کاربر لینک را بدون پروتکل ارسال کرده باشد
+        # سعی می‌کنیم الگوهای رایج را بررسی کنیم
+        common_domains = [
+            r'(?:www\.)?instagram\.com/[\w.-]+/(?:p|reel)/[\w-]+',     # Instagram posts and reels
+            r'(?:www\.)?instagram\.com/stories/[\w.-]+/\d+',           # Instagram stories
+            r'(?:www\.)?youtube\.com/watch\?v=[\w-]+',                 # YouTube videos
+            r'youtu\.be/[\w-]+',                                       # YouTube shortened URLs
+            r'(?:www\.)?youtube\.com/shorts/[\w-]+'                    # YouTube shorts
+        ]
+        
+        for pattern in common_domains:
+            potential_url = re.search(pattern, text)
+            if potential_url:
+                return 'https://' + potential_url.group(0)
+    
+    # اگر URL استاندارد پیدا شد
+    if urls:
+        # بررسی کنیم که URL یوتیوب کامل است یا فقط دامنه اصلی
+        for url in urls:
+            # برای شناسایی یک URL کامل یوتیوب
+            if '/shorts/' in url:
+                # اطمینان از اینکه بعد از /shorts/ یک شناسه وجود دارد
+                match = re.search(r'youtube\.com/shorts/([\w-]+)', url)
+                if match and match.group(1):
+                    logger.info(f"URL شورتز یوتیوب پیدا شد: {url}")
+                    return url
+            
+            # برای ویدیوهای عادی یوتیوب
+            if '/watch?v=' in url:
+                match = re.search(r'[?&]v=([\w-]+)', url)
+                if match and match.group(1):
+                    logger.info(f"URL ویدیوی یوتیوب پیدا شد: {url}")
+                    return url
+            
+            # برای لینک‌های کوتاه یوتیوب
+            if 'youtu.be/' in url:
+                match = re.search(r'youtu\.be/([\w-]+)', url)
+                if match and match.group(1):
+                    logger.info(f"URL کوتاه یوتیوب پیدا شد: {url}")
+                    return url
+            
+            # برای لینک‌های اینستاگرام
+            if 'instagram.com/' in url:
+                logger.info(f"URL اینستاگرام پیدا شد: {url}")
+                return url
+        
+        # اگر هیچ یک از شرایط بالا صادق نبود، اولین URL را برمی‌گردانیم
+        logger.info(f"URL پیدا شد: {urls[0]}")
+        return urls[0]
+    
+    logger.warning(f"هیچ URL در متن پیدا نشد: {text}")
+    return None
 
 def is_instagram_url(url):
     """بررسی می‌کند که آیا URL مربوط به اینستاگرام است یا خیر"""
@@ -26,7 +82,18 @@ def is_youtube_url(url):
 
 def is_youtube_shorts(url):
     """بررسی می‌کند که آیا URL مربوط به شورتز یوتیوب است یا خیر"""
-    return 'shorts' in url
+    # تشخیص دقیق‌تر شورتز یوتیوب با استفاده از regex
+    if not url:
+        return False
+        
+    # بررسی الگوی /shorts/ در URL
+    shorts_pattern = r'youtube\.com/shorts/[\w-]+'
+    is_shorts = bool(re.search(shorts_pattern, url))
+    
+    if is_shorts:
+        logger.info(f"لینک شورتز یوتیوب شناسایی شد: {url}")
+    
+    return is_shorts
 
 def generate_temp_filename(extension='.mp4'):
     """ایجاد یک نام فایل موقت با پسوند مشخص"""
