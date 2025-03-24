@@ -592,6 +592,13 @@ def callback_handler(update: Update, context: CallbackContext) -> None:
     elif callback_data.startswith("audio_"):
         url = callback_data[len("audio_"):]
         download_youtube_audio(update, context, url, user_id)
+    # پردازش دکمه‌های اینستاگرام
+    elif callback_data.startswith("insta_video_"):
+        url = callback_data[len("insta_video_"):]
+        download_instagram_video(update, context, url, user_id)
+    elif callback_data.startswith("insta_audio_"):
+        url = callback_data[len("insta_audio_"):]
+        download_instagram_audio(update, context, url, user_id)
     # پردازش دکمه بازگشت
     elif callback_data.startswith("back_"):
         url = callback_data[len("back_"):]
